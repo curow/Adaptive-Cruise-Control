@@ -25,9 +25,9 @@ except IndexError:
 import carla
 
 # ==============================================================================
-# -- function start ------------------------------------------------------------
+# -- utility function ----------------------------------------------------------
 # ==============================================================================
-def draw_waypoints(world, waypoints, z=0.5):
+def draw_waypoints(world, waypoints, z=3):
     """
     Draw a list of waypoints at a certain height given in z.
 
@@ -84,8 +84,10 @@ try:
     waypoints = [waypoint]
     for _ in range(500):
         # Find next waypoint 1 meters ahead.
-        waypoint = random.choice(waypoint.next(1.0))
+        waypoint = random.choice(waypoint.next(2.0))
         waypoints.append(waypoint)
+    print("Start: {}".format(waypoints[0].transform))
+    print("End: {}".format(waypoints[-1].transform))
     draw_waypoints(world, waypoints)
 
     # Disable physics, we're just teleporting the vehicle.
@@ -94,13 +96,21 @@ try:
     # Teleport the vehicle at the starting point.
     ego_vehicle.set_transform(waypoints[0].transform)
 
+    # Wait for vehicle to land on ground
+    time.sleep(4.0)
+
     # Turn on physics to apply control
     ego_vehicle.set_simulate_physics(True)
     while True:
-        # for w in waypoints:
-        #     time.sleep(2)
-        #     ego_vehicle.set_transform(w.transform)
-        #     print(ego_vehicle.get_transform())
+        # Wait for world to ready
+        world.wait_for_tick(10.0)
+        # Apply random control
+        throttle = random.uniform(0, 1)
+        control = carla.VehicleControl(
+            throttle=throttle,
+            manual_gear_shift=False)
+        ego_vehicle.apply_control(control)
+
 
 except KeyboardInterrupt:
     print("\nInterrupted")
