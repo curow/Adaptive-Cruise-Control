@@ -27,7 +27,7 @@ import carla
 from agents.navigation.controller import VehiclePIDController
 
 # ==============================================================================
-# -- import staff from local file ----------------------------------------------
+# -- import staff from local module --------------------------------------------
 # ==============================================================================
 from utils import main
 
@@ -160,7 +160,6 @@ def simulation(debug=False):
         print("{} created!".format(ego_vehicle))
 
         # Wait for world to get the vehicle actor
-        world.tick()
         world_snapshot = world.wait_for_tick()
         actor_snapshot = world_snapshot.find(ego_vehicle.id)
         
@@ -196,7 +195,19 @@ def simulation(debug=False):
         agent = NaiveAgent(ego_vehicle, route, target_speed=30)
         while True:
             # Wait for world to get ready
-            world.wait_for_tick(10.0)
+            # world.wait_for_tick(10.0)
+
+            # Wait for world to get the vehicle actor
+            world_snapshot = world.wait_for_tick()
+            # actor_snapshot = world_snapshot.find(ego_vehicle.id)
+            
+            # Set spectator at given transform
+            # if actor_snapshot:
+            #     spectator_transform = actor_snapshot.get_transform()
+            #     spectator_transform.location.z += 3
+            #     spectator_transform.location.x += 5
+            #     spectator.set_transform(spectator_transform)
+
             # Apply control
             control = agent.run_step()
             if debug and control.throttle:
