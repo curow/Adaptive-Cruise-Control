@@ -13,7 +13,7 @@ import numpy as np
 # -- find carla module and add PythonAPI to path -------------------------------
 # ==============================================================================
 try:
-    python_api_path = '/home/hollow/carla/CARLA_0.9.6/PythonAPI/carla/'
+    python_api_path = '/home/hollow/carla/CARLA_0.9.7/PythonAPI/carla/'
     carla_path = python_api_path + 'dist/carla-*%d.%d-%s.egg' % (
         sys.version_info.major,
         sys.version_info.minor,
