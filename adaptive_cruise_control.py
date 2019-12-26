@@ -56,6 +56,37 @@ def get_actor_display_name(actor, truncate=250):
     name = ' '.join(actor.type_id.replace('_', '.').title().split('.')[1:])
     return (name[:truncate - 1] + u'\u2026') if len(name) > truncate else name
 
+def get_speed(vehicle):
+    """
+    Compute speed of a vehicle in Kmh
+    :param vehicle: the vehicle for which speed is calculated
+    :return: speed as a float in Kmh
+    """
+    vel = vehicle.get_velocity()
+    return 3.6 * math.sqrt(vel.x ** 2 + vel.y ** 2 + vel.z ** 2)
+
+def get_distance(ego_vehicle, other):
+    ego_heading = ego_vehicle.get_transform().rotation.yaw
+    other_heading = other.get_transform().rotation.yaw
+    sign = 1 if abs(ego_heading - other_heading) < 90 else 0
+
+    ego_location = ego_vehicle.get_transform().location
+    other_location = other.get_transform().location
+    dx = ego_location.x - other_location.x
+    dy = ego_location.y - other_location.y
+    dz = ego_location.z - other_location.z
+    target_vector = np.array([dx, dy, dz])
+    norm_target = np.linalg.norm(target_vector)
+    return sign * norm_target
+
+def emergency_stop():
+        return carla.VehicleControl(
+            steer=0,
+            throttle=0,
+            brake=1.0,
+            hand_brake=False,
+            manual_gear_shift=False
+        )
 # ==============================================================================
 # -- Naive Agent ---------------------------------------------------------------
 # ==============================================================================
@@ -68,30 +99,24 @@ class NaiveAgent:
         self._map = self._world.get_map()
         self._vehicle_controller = VehiclePIDController(self._vehicle)
 
-    def emergency_stop(self):
-        return carla.VehicleControl(
-            steer=0,
-            throttle=0,
-            brake=1.0,
-            hand_brake=False,
-            manual_gear_shift=False
-        )
+    
 
-    def is_close(self, waypoint, epsilon=0.1):
+    def is_close(self, other, epsilon=0.1):
         vehicle_transform = self._vehicle.get_transform()
         loc = vehicle_transform.location
-        dx = waypoint.transform.location.x - loc.x
-        dy = waypoint.transform.location.y - loc.y
+        dx = other.transform.location.x - loc.x
+        dy = other.transform.location.y - loc.y
 
         return np.linalg.norm(np.array([dx, dy])) < epsilon
     
-    def is_ahead(self, waypoint):
+    def is_ahead(self, other):
+        """Check if ego vehicle is ahead of other"""
         vehicle_transform = self._vehicle.get_transform()
         loc = vehicle_transform.location
         orientation = vehicle_transform.rotation.yaw
 
-        dx = waypoint.transform.location.x - loc.x
-        dy = waypoint.transform.location.y - loc.y
+        dx = other.transform.location.x - loc.x
+        dy = other.transform.location.y - loc.y
         target_vector = np.array([dx, dy])
         norm_target = np.linalg.norm(target_vector)
 
@@ -107,6 +132,37 @@ class NaiveAgent:
         d_angle = math.degrees(math.acos(cos_vector))
 
         return d_angle > 90
+    
+    def get_front_vehicle_state(self):
+        actor_list = self._world.get_actors()
+        vehicle_list = actor_list.filter("*vehicle*")
+        ego_vehicle_location = self._vehicle.get_location()
+        ego_vehicle_transform = self._vehicle.get_transform()
+        ego_vehicle_waypoint = self._map.get_waypoint(ego_vehicle_location)
+
+        front_vehicles_info = []
+        for target_vehicle in vehicle_list:
+            # do not account for the ego vehicle
+            if target_vehicle.id == self._vehicle.id:
+                continue
+
+            # if the object is not in our lane it's not an obstacle
+            target_vehicle_waypoint = self._map.get_waypoint(target_vehicle.get_location())
+            if target_vehicle_waypoint.road_id != ego_vehicle_waypoint.road_id or \
+                    target_vehicle_waypoint.lane_id != ego_vehicle_waypoint.lane_id:
+                continue
+
+            target_transform = target_vehicle.get_transform()
+            target_distance = get_distance(ego_vehicle_transform, target_transform)
+            target_speed = get_speed(target_vehicle)
+            if target_distance > 0:
+                front_vehicles_info.append((target_distance, target_speed))
+        
+        if front_vehicles_info:
+            front_vehicles_info = sorted(front_vehicles_info, key=lambda x: x[0])
+            return True, front_vehicles_info[0]
+        else:
+            return False, None
 
     def run_step(self, debug=False):
         # stop if no route to follow
