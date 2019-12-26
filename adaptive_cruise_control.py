@@ -56,14 +56,6 @@ def get_actor_display_name(actor, truncate=250):
     name = ' '.join(actor.type_id.replace('_', '.').title().split('.')[1:])
     return (name[:truncate - 1] + u'\u2026') if len(name) > truncate else name
 
-def emergency_stop():
-        return carla.VehicleControl(
-            steer=0,
-            throttle=0,
-            brake=1.0,
-            hand_brake=False,
-            manual_gear_shift=False
-        )
 # ==============================================================================
 # -- Naive Agent ---------------------------------------------------------------
 # ==============================================================================
@@ -152,41 +144,6 @@ class NaiveAgent:
         
 
 # ==============================================================================
-# -- Obstacle Sensor -----------------------------------------------------------
-# ==============================================================================
-
-class ObstacleSensor:
-    def __init__(self, parent_actor, close_distance=20):
-        self.sensor = None
-        self._parent = parent_actor
-        self.close_distance = close_distance
-        world = self._parent.get_world()
-        bp = world.get_blueprint_library().find('sensor.other.obstacle')
-        bp.set_attribute('only_dynamics', 'true')
-        bp.set_attribute('distance', '280')
-
-        self.sensor = world.spawn_actor(bp,
-            carla.Transform(carla.Location(x=2.8, z=1.0)),
-            attach_to=self._parent)
-        # We need to pass the lambda a weak reference to self to avoid circular
-        # reference.
-        weak_self = weakref.ref(self)
-        self.sensor.listen(lambda event: ObstacleSensor._on_obstacle(weak_self, event))
-
-    @staticmethod
-    def _on_obstacle(weak_self, event):
-        self = weak_self()
-        if not self:
-            return
-        actor_type = get_actor_display_name(event.other_actor)
-        obstacle_distance = event.distance
-        print('detect {} in {} meters'.format(actor_type, obstacle_distance))
-        if obstacle_distance < self.close_distance:
-            print("stop!!!")
-            self._parent.apply_control(emergency_stop())
-
-
-# ==============================================================================
 # -- start simulation ----------------------------------------------------------
 # ==============================================================================
 @main
@@ -251,10 +208,6 @@ def simulation(debug=False):
         # set up agent to control ego vehicle
         agent = NaiveAgent(ego_vehicle, route, target_speed=25)
 
-        # attach obstacle sensor to ego vehicle
-        obstacle_sensor = ObstacleSensor(ego_vehicle)
-        actor_list.append(obstacle_sensor.sensor)
-        
         while True:
             # Wait for world to get ready
             world.wait_for_tick(10.0)
