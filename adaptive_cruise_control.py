@@ -33,6 +33,38 @@ from agents.navigation.controller import VehiclePIDController
 from utils import main
 
 # ==============================================================================
+# -- utility function ----------------------------------------------------------
+# ==============================================================================
+def draw_waypoints(world, waypoints, z=0.1):
+    """
+    Draw a list of waypoints at a certain height given in z.
+
+    :param world: carla.world object
+    :param waypoints: list or iterable container with the waypoints to draw
+    :param z: height in meters
+    :return:
+    """
+    for w in waypoints:
+        t = w.transform
+        begin = t.location + carla.Location(z=z)
+        angle = math.radians(t.rotation.yaw)
+        end = begin + carla.Location(x=math.cos(angle), y=math.sin(angle))
+        # world.debug.draw_arrow(begin, end, arrow_size=0.3)
+        world.debug.draw_line(begin, end)
+
+def get_actor_display_name(actor, truncate=250):
+    name = ' '.join(actor.type_id.replace('_', '.').title().split('.')[1:])
+    return (name[:truncate - 1] + u'\u2026') if len(name) > truncate else name
+
+def emergency_stop():
+        return carla.VehicleControl(
+            steer=0,
+            throttle=0,
+            brake=1.0,
+            hand_brake=False,
+            manual_gear_shift=False
+        )
+# ==============================================================================
 # -- Naive Agent ---------------------------------------------------------------
 # ==============================================================================
 class NaiveAgent:
@@ -124,9 +156,10 @@ class NaiveAgent:
 # ==============================================================================
 
 class ObstacleSensor:
-    def __init__(self, parent_actor):
+    def __init__(self, parent_actor, close_distance=20):
         self.sensor = None
         self._parent = parent_actor
+        self.close_distance = close_distance
         world = self._parent.get_world()
         bp = world.get_blueprint_library().find('sensor.other.obstacle')
         bp.set_attribute('only_dynamics', 'true')
@@ -146,31 +179,12 @@ class ObstacleSensor:
         if not self:
             return
         actor_type = get_actor_display_name(event.other_actor)
-        print('detect {} in {} meters'.format(actor_type, event.distance))
+        obstacle_distance = event.distance
+        print('detect {} in {} meters'.format(actor_type, obstacle_distance))
+        if obstacle_distance < self.close_distance:
+            print("stop!!!")
+            self._parent.apply_control(emergency_stop())
 
-# ==============================================================================
-# -- utility function ----------------------------------------------------------
-# ==============================================================================
-def draw_waypoints(world, waypoints, z=0.1):
-    """
-    Draw a list of waypoints at a certain height given in z.
-
-    :param world: carla.world object
-    :param waypoints: list or iterable container with the waypoints to draw
-    :param z: height in meters
-    :return:
-    """
-    for w in waypoints:
-        t = w.transform
-        begin = t.location + carla.Location(z=z)
-        angle = math.radians(t.rotation.yaw)
-        end = begin + carla.Location(x=math.cos(angle), y=math.sin(angle))
-        # world.debug.draw_arrow(begin, end, arrow_size=0.3)
-        world.debug.draw_line(begin, end)
-
-def get_actor_display_name(actor, truncate=250):
-    name = ' '.join(actor.type_id.replace('_', '.').title().split('.')[1:])
-    return (name[:truncate - 1] + u'\u2026') if len(name) > truncate else name
 
 # ==============================================================================
 # -- start simulation ----------------------------------------------------------
@@ -213,7 +227,8 @@ def simulation(debug=False):
 
         # Get route for vehicle to follow
         route = [waypoint]
-        for _ in range(250):
+        # for _ in range(250):
+        for _ in range(1000):
             waypoint = random.choice(waypoint.next(2.0))
             route.append(waypoint)
 
