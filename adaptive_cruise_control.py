@@ -159,12 +159,14 @@ def simulation(debug=False):
         actor_list.append(ego_vehicle)
         print("{} created!".format(ego_vehicle))
 
-        # Wait for world to get the vehicle actor
-        world_snapshot = world.wait_for_tick()
-        actor_snapshot = world_snapshot.find(ego_vehicle.id)
-        
-        # Set spectator at given transform (vehicle transform)
-        spectator.set_transform(actor_snapshot.get_transform())
+        while True:
+            # Wait for world to get the vehicle actor
+            world_snapshot = world.wait_for_tick()
+            actor_snapshot = world_snapshot.find(ego_vehicle.id)
+            # Set spectator at given transform (vehicle transform)
+            if actor_snapshot:
+                spectator.set_transform(actor_snapshot.get_transform())
+                break
         
         # Retrieve the closest waypoint.
         waypoint = world_map.get_waypoint(ego_vehicle.get_location())
@@ -195,18 +197,7 @@ def simulation(debug=False):
         agent = NaiveAgent(ego_vehicle, route, target_speed=30)
         while True:
             # Wait for world to get ready
-            # world.wait_for_tick(10.0)
-
-            # Wait for world to get the vehicle actor
-            world_snapshot = world.wait_for_tick()
-            # actor_snapshot = world_snapshot.find(ego_vehicle.id)
-            
-            # Set spectator at given transform
-            # if actor_snapshot:
-            #     spectator_transform = actor_snapshot.get_transform()
-            #     spectator_transform.location.z += 3
-            #     spectator_transform.location.x += 5
-            #     spectator.set_transform(spectator_transform)
+            world.wait_for_tick(10.0)
 
             # Apply control
             control = agent.run_step()
