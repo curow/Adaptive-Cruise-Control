@@ -7,10 +7,11 @@ import glob
 import random
 import time
 import math
+import weakref
 import numpy as np
 
 # ==============================================================================
-# -- find carla module and add PythonAPI to path -------------------------------
+# -- find carla and other API module and add them to path ----------------------
 # ==============================================================================
 try:
     python_api_path = '/home/hollow/carla/CARLA_0.9.7/PythonAPI/carla/'
@@ -27,12 +28,12 @@ import carla
 from agents.navigation.controller import VehiclePIDController
 
 # ==============================================================================
-# -- import staff from local module --------------------------------------------
+# -- import helper function from local module --------------------------------------------
 # ==============================================================================
 from utils import main
 
 # ==============================================================================
-# -- agent class ---------------------------------------------------------------
+# -- Naive Agent ---------------------------------------------------------------
 # ==============================================================================
 class NaiveAgent:
     def __init__(self, vehicle, route, target_speed=20):
@@ -74,7 +75,12 @@ class NaiveAgent:
             math.cos(math.radians(orientation)),
             math.sin(math.radians(orientation))
             ])
-        d_angle = math.degrees(math.acos(np.dot(forward_vector, target_vector) / norm_target))
+        cos_vector = np.dot(forward_vector, target_vector) / norm_target
+        if cos_vector > 1:
+            cos_vector = 1
+        elif cos_vector < -1:
+            cos_vector = -1
+        d_angle = math.degrees(math.acos(cos_vector))
 
         return d_angle > 90
 
@@ -112,6 +118,36 @@ class NaiveAgent:
 
         return self._vehicle_controller.run_step(self._target_speed, target_waypoint)
         
+
+# ==============================================================================
+# -- Obstacle Sensor -----------------------------------------------------------
+# ==============================================================================
+
+class ObstacleSensor:
+    def __init__(self, parent_actor):
+        self.sensor = None
+        self._parent = parent_actor
+        world = self._parent.get_world()
+        bp = world.get_blueprint_library().find('sensor.other.obstacle')
+        bp.set_attribute('only_dynamics', 'true')
+        bp.set_attribute('distance', '280')
+
+        self.sensor = world.spawn_actor(bp,
+            carla.Transform(carla.Location(x=2.8, z=1.0)),
+            attach_to=self._parent)
+        # We need to pass the lambda a weak reference to self to avoid circular
+        # reference.
+        weak_self = weakref.ref(self)
+        self.sensor.listen(lambda event: ObstacleSensor._on_obstacle(weak_self, event))
+
+    @staticmethod
+    def _on_obstacle(weak_self, event):
+        self = weak_self()
+        if not self:
+            return
+        actor_type = get_actor_display_name(event.other_actor)
+        print('detect {} in {} meters'.format(actor_type, event.distance))
+
 # ==============================================================================
 # -- utility function ----------------------------------------------------------
 # ==============================================================================
@@ -131,6 +167,10 @@ def draw_waypoints(world, waypoints, z=0.1):
         end = begin + carla.Location(x=math.cos(angle), y=math.sin(angle))
         # world.debug.draw_arrow(begin, end, arrow_size=0.3)
         world.debug.draw_line(begin, end)
+
+def get_actor_display_name(actor, truncate=250):
+    name = ' '.join(actor.type_id.replace('_', '.').title().split('.')[1:])
+    return (name[:truncate - 1] + u'\u2026') if len(name) > truncate else name
 
 # ==============================================================================
 # -- start simulation ----------------------------------------------------------
@@ -194,7 +234,12 @@ def simulation(debug=False):
         ego_vehicle.set_simulate_physics(True)
 
         # set up agent to control ego vehicle
-        agent = NaiveAgent(ego_vehicle, route, target_speed=30)
+        agent = NaiveAgent(ego_vehicle, route, target_speed=25)
+
+        # attach obstacle sensor to ego vehicle
+        obstacle_sensor = ObstacleSensor(ego_vehicle)
+        actor_list.append(obstacle_sensor.sensor)
+        
         while True:
             # Wait for world to get ready
             world.wait_for_tick(10.0)
