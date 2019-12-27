@@ -125,7 +125,7 @@ def get_vehicle_max_acceleration(_):
     :return: maximum acceleration [m/s^2 > 0]
     :rtype: float64
     """
-    max_acceleration = 3.0
+    max_acceleration = 6.0
 
     return max_acceleration
 
@@ -168,7 +168,7 @@ class IDM:
         ego_speed = get_speed(self.ego_vehicle, unit='ms')
         additional_gap = (self.safetime_headway * ego_speed) + \
                 (ego_speed * (ego_speed - self.leader_speed) /
-                        (2 * math.sqrt(self.max_acceleration * self.max_deceleration / 2)))
+                        (2 * math.sqrt(self.max_acceleration * self.max_deceleration)))
         return self.minimum_distance + max(0, additional_gap)
 
     def calc_desired_acceleration(self):
