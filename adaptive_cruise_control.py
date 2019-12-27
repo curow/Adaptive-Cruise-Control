@@ -14,7 +14,7 @@ import numpy as np
 # -- find carla and other API module and add them to path ----------------------
 # ==============================================================================
 try:
-    python_api_path = '/home/hollow/carla/CARLA_0.9.7/PythonAPI/carla/'
+    python_api_path = '/home/zk/carla/CARLA_0.9.7/PythonAPI/carla/'
     carla_path = python_api_path + 'dist/carla-*%d.%d-%s.egg' % (
         sys.version_info.major,
         sys.version_info.minor,
@@ -65,13 +65,13 @@ def get_speed(vehicle):
     vel = vehicle.get_velocity()
     return 3.6 * math.sqrt(vel.x ** 2 + vel.y ** 2 + vel.z ** 2)
 
-def get_distance(ego_vehicle, other):
-    ego_heading = ego_vehicle.get_transform().rotation.yaw
-    other_heading = other.get_transform().rotation.yaw
+def get_distance(ego_vehicle_transform, other_transform):
+    ego_heading = ego_vehicle_transform.rotation.yaw
+    other_heading = other_transform.rotation.yaw
     sign = 1 if abs(ego_heading - other_heading) < 90 else 0
 
-    ego_location = ego_vehicle.get_transform().location
-    other_location = other.get_transform().location
+    ego_location = ego_vehicle_transform.location
+    other_location = other_transform.location
     dx = ego_location.x - other_location.x
     dy = ego_location.y - other_location.y
     dz = ego_location.z - other_location.z
@@ -101,22 +101,22 @@ class NaiveAgent:
 
     
 
-    def is_close(self, other, epsilon=0.1):
+    def is_close(self, other_transform, epsilon=0.1):
         vehicle_transform = self._vehicle.get_transform()
         loc = vehicle_transform.location
-        dx = other.transform.location.x - loc.x
-        dy = other.transform.location.y - loc.y
+        dx = other_transform.location.x - loc.x
+        dy = other_transform.location.y - loc.y
 
         return np.linalg.norm(np.array([dx, dy])) < epsilon
     
-    def is_ahead(self, other):
+    def is_ahead(self, other_transform):
         """Check if ego vehicle is ahead of other"""
         vehicle_transform = self._vehicle.get_transform()
         loc = vehicle_transform.location
         orientation = vehicle_transform.rotation.yaw
 
-        dx = other.transform.location.x - loc.x
-        dy = other.transform.location.y - loc.y
+        dx = other_transform.location.x - loc.x
+        dy = other_transform.location.y - loc.y
         target_vector = np.array([dx, dy])
         norm_target = np.linalg.norm(target_vector)
 
@@ -132,11 +132,26 @@ class NaiveAgent:
         d_angle = math.degrees(math.acos(cos_vector))
 
         return d_angle > 90
+
+    def get_distance(self, other):
+        ego_vehicle_transform = self._vehicle.get_transform()
+        other_transform = other.get_transform()
+        sign = -1 if self.is_ahead(other_transform) else 1
+
+        ego_location = ego_vehicle_transform.location
+        other_location = other_transform.location
+        dx = ego_location.x - other_location.x
+        dy = ego_location.y - other_location.y
+        dz = ego_location.z - other_location.z
+        target_vector = np.array([dx, dy, dz])
+        norm_target = np.linalg.norm(target_vector)
+        return sign * norm_target
     
     def get_front_vehicle_state(self):
         actor_list = self._world.get_actors()
         vehicle_list = actor_list.filter("*vehicle*")
         ego_vehicle_transform = self._vehicle.get_transform()
+        ego_vehicle_location = self._vehicle.get_location()
         ego_vehicle_waypoint = self._map.get_waypoint(ego_vehicle_location)
 
         front_vehicles_info = []
@@ -152,8 +167,7 @@ class NaiveAgent:
                 continue
 
             # get the state of front vehiles
-            target_transform = target_vehicle.get_transform()
-            target_distance = get_distance(ego_vehicle_transform, target_transform)
+            target_distance = self.get_distance(target_vehicle)
             target_speed = get_speed(target_vehicle)
             if target_distance > 0:
                 front_vehicles_info.append((target_distance, target_speed))
@@ -172,12 +186,12 @@ class NaiveAgent:
         # purge obsolete waypoints in the route
         index = 0
         for i, waypoint in enumerate(self._route):
-            if self.is_close(waypoint):
+            if self.is_close(waypoint.transform):
                 if debug:
                     print("Vehicle: {}".format(self._vehicle.get_transform()))
                     print("vehicle is close to obsolete waypoint: {}".format(waypoint))
                 index += 1
-            elif self.is_ahead(waypoint):
+            elif self.is_ahead(waypoint.transform):
                 if debug:
                     print("Vehicle: {}".format(self._vehicle.get_transform()))
                     print("vehicle is ahead of obsolete waypoint: {}".format(waypoint))
@@ -198,6 +212,8 @@ class NaiveAgent:
 
         has_front_vehicle, vehicle_state = self.get_front_vehicle_state()
         if has_front_vehicle:
+            front_vehicle_distance, front_vehicle_speed = vehicle_state
+            print("obstacle distance: {:3f}m, speed: {:1f}km/h".format(front_vehicle_distance, front_vehicle_speed))
             return self._vehicle_controller.run_step(self._target_speed, target_waypoint)
         else:
             return self._vehicle_controller.run_step(self._target_speed, target_waypoint)
@@ -268,9 +284,13 @@ def simulation(debug=False):
         # set up agent to control ego vehicle
         agent = NaiveAgent(ego_vehicle, route, target_speed=25)
 
+        settings = world.get_settings()
+        settings.synchronous_mode = True
+        settings.fixed_delta_seconds = 0.03
+        world.apply_settings(settings)
         while True:
-            # Wait for world to get ready
-            world.wait_for_tick(10.0)
+            # synchronize with world
+            world.tick()
 
             # Apply control
             control = agent.run_step()
@@ -282,6 +302,11 @@ def simulation(debug=False):
         print("\nInterrupted")
 
     finally:
+        # change back to asynchronous mode
+        settings = world.get_settings()
+        settings.synchronous_mode = False 
+        world.apply_settings(settings)
+
         print('destroying actors...')
         for actor in actor_list:
             if actor is not None:
