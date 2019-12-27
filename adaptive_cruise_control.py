@@ -136,7 +136,6 @@ class NaiveAgent:
     def get_front_vehicle_state(self):
         actor_list = self._world.get_actors()
         vehicle_list = actor_list.filter("*vehicle*")
-        ego_vehicle_location = self._vehicle.get_location()
         ego_vehicle_transform = self._vehicle.get_transform()
         ego_vehicle_waypoint = self._map.get_waypoint(ego_vehicle_location)
 
@@ -152,6 +151,7 @@ class NaiveAgent:
                     target_vehicle_waypoint.lane_id != ego_vehicle_waypoint.lane_id:
                 continue
 
+            # get the state of front vehiles
             target_transform = target_vehicle.get_transform()
             target_distance = get_distance(ego_vehicle_transform, target_transform)
             target_speed = get_speed(target_vehicle)
@@ -167,7 +167,7 @@ class NaiveAgent:
     def run_step(self, debug=False):
         # stop if no route to follow
         if not self._route:
-            return self.emergency_stop()
+            return emergency_stop()
 
         # purge obsolete waypoints in the route
         index = 0
@@ -189,14 +189,18 @@ class NaiveAgent:
             if debug:
                 print("waypoint remain: {}".format(len(self._route)))
             if not self._route:
-                return self.emergency_stop()
+                return emergency_stop()
 
         # follow next waypoint
         target_waypoint = self._route[0]
         if debug:
             print("target waypoint: {}".format(target_waypoint))
 
-        return self._vehicle_controller.run_step(self._target_speed, target_waypoint)
+        has_front_vehicle, vehicle_state = self.get_front_vehicle_state()
+        if has_front_vehicle:
+            return self._vehicle_controller.run_step(self._target_speed, target_waypoint)
+        else:
+            return self._vehicle_controller.run_step(self._target_speed, target_waypoint)
         
 
 # ==============================================================================
