@@ -55,7 +55,7 @@ import os
 import sys
 
 try:
-    python_api_path = '/home/zk/carla/CARLA_0.9.7/PythonAPI/carla/'
+    python_api_path = '/home/hollow/carla/CARLA_0.9.7/PythonAPI/carla/'
     carla_path = python_api_path + 'dist/carla-*%d.%d-%s.egg' % (
         sys.version_info.major,
         sys.version_info.minor,

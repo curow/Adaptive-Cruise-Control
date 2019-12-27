@@ -14,7 +14,7 @@ import numpy as np
 # -- find carla and other API module and add them to path ----------------------
 # ==============================================================================
 try:
-    python_api_path = '/home/zk/carla/CARLA_0.9.7/PythonAPI/carla/'
+    python_api_path = '/home/hollow/carla/CARLA_0.9.7/PythonAPI/carla/'
     carla_path = python_api_path + 'dist/carla-*%d.%d-%s.egg' % (
         sys.version_info.major,
         sys.version_info.minor,
@@ -74,20 +74,6 @@ def get_speed(vehicle, unit='kmh'):
     else:
         return vel_ms
 
-def get_distance(ego_vehicle_transform, other_transform):
-    ego_heading = ego_vehicle_transform.rotation.yaw
-    other_heading = other_transform.rotation.yaw
-    sign = 1 if abs(ego_heading - other_heading) < 90 else 0
-
-    ego_location = ego_vehicle_transform.location
-    other_location = other_transform.location
-    dx = ego_location.x - other_location.x
-    dy = ego_location.y - other_location.y
-    dz = ego_location.z - other_location.z
-    target_vector = np.array([dx, dy, dz])
-    norm_target = np.linalg.norm(target_vector)
-    return sign * norm_target
-
 def emergency_stop():
         return carla.VehicleControl(
             steer=0,
@@ -125,7 +111,7 @@ def get_vehicle_max_acceleration(_):
     :return: maximum acceleration [m/s^2 > 0]
     :rtype: float64
     """
-    max_acceleration = 3.0
+    max_acceleration = 6.0
 
     return max_acceleration
 
@@ -147,28 +133,37 @@ def get_vehicle_max_deceleration(_):
 # -- Intelligent Driver Model --------------------------------------------------
 # ==============================================================================
 class IDM:
-    def __init__(self, vehicle, leader_speed, leader_distance, dt):
+    def __init__(self, vehicle, desired_speed, dt):
         """
         leader_speed: [kmh]
         """
         self.ego_vehicle = vehicle
         self.time_interval = dt
-        # translate kmh to meters/second
-        self.leader_speed, self.leader_distance = leader_speed / 3.6, leader_distance    
-        self.desired_speed = 25 / 3.6
+        self.desired_speed = desired_speed / 3.6
         # 2 second time headway
         self.safetime_headway = 2
         # 10 meters minimum distance
         self.minimum_distance = 10
+        # leader information
+        self.leader_distance = float('inf')
+        self.leader_speed = float('inf')
 
         self.max_acceleration = get_vehicle_max_acceleration(self.ego_vehicle)
         self.max_deceleration = get_vehicle_max_deceleration(self.ego_vehicle)
+    
+    def set_leader_info(self, leader_distance, leader_speed):
+        # translate kmh to meters/second
+        self.leader_distance = leader_distance
+        self.leader_speed = leader_speed / 3.6
+    
+    def get_leader_info(self):
+        return self.leader_distance, self.leader_speed
 
     def calc_desired_gap(self):
         ego_speed = get_speed(self.ego_vehicle, unit='ms')
         additional_gap = (self.safetime_headway * ego_speed) + \
                 (ego_speed * (ego_speed - self.leader_speed) /
-                        (2 * math.sqrt(self.max_acceleration * self.max_deceleration / 2)))
+                        (2 * math.sqrt(self.max_acceleration * self.max_deceleration)))
         return self.minimum_distance + max(0, additional_gap)
 
     def calc_desired_acceleration(self):
@@ -197,6 +192,7 @@ class NaiveAgent:
         self._vehicle = vehicle
         self._route = route
         self._target_speed = target_speed
+        self._driver = IDM(self._vehicle, self._target_speed, TIME_INTERVAL)
         self._world = self._vehicle.get_world()
         self._map = self._world.get_map()
         self._vehicle_controller = VehiclePIDController(self._vehicle)
@@ -309,12 +305,14 @@ class NaiveAgent:
         if debug:
             print("target waypoint: {}".format(target_waypoint))
 
-        has_front_vehicle, vehicle_state = self.get_front_vehicle_state()
+        has_front_vehicle, front_vehicle_state = self.get_front_vehicle_state()
         if has_front_vehicle:
-            front_vehicle_distance, front_vehicle_speed = vehicle_state
+            front_vehicle_distance, front_vehicle_speed = front_vehicle_state
             print("obstacle distance: {:3f}m, speed: {:1f}km/h".format(front_vehicle_distance, front_vehicle_speed))
-            driver = IDM(self._vehicle, front_vehicle_speed, front_vehicle_distance, TIME_INTERVAL)
-            desired_speed = driver.calc_desired_speed()
+            if front_vehicle_distance < self._driver.minimum_distance:
+                return emergency_stop()
+            self._driver.set_leader_info(*front_vehicle_state)
+            desired_speed = self._driver.calc_desired_speed()
             print("target speed: {:1f}".format(desired_speed))
             return self._vehicle_controller.run_step(desired_speed, target_waypoint)
         else:
@@ -339,7 +337,9 @@ def simulation(debug=False):
         
         # Set up ego vehicle model and location
         vehicle_blueprint = random.choice(blueprint_library.filter('vehicle.tesla.*'))
-        # spawn_point = random.choice(world_map.get_spawn_points())
+        colors = vehicle_blueprint.get_attribute('color').recommended_values
+        print("recommended colors: {}".format(colors))
+        vehicle_blueprint.set_attribute('color', '255,255,255')
         spawn_point = carla.Transform(carla.Location(x=330, y=14, z=20), carla.Rotation(yaw=-180))
 
         # Create ego vehicle
@@ -347,21 +347,12 @@ def simulation(debug=False):
         actor_list.append(ego_vehicle)
         print("{} created!".format(ego_vehicle))
 
-        while True:
-            # Wait for world to get the vehicle actor
-            world_snapshot = world.wait_for_tick()
-            actor_snapshot = world_snapshot.find(ego_vehicle.id)
-            # Set spectator at given transform (vehicle transform)
-            if actor_snapshot:
-                spectator.set_transform(actor_snapshot.get_transform())
-                break
-        
         # Retrieve the closest waypoint.
+        world.wait_for_tick()
         waypoint = world_map.get_waypoint(ego_vehicle.get_location())
 
         # Get route for vehicle to follow
         route = [waypoint]
-        # for _ in range(250):
         for _ in range(1000):
             waypoint = random.choice(waypoint.next(2.0))
             route.append(waypoint)
@@ -376,15 +367,21 @@ def simulation(debug=False):
         # Teleport the vehicle at the starting point.
         ego_vehicle.set_transform(route[0].transform)
 
-        # Wait for vehicle to land on ground
-        time.sleep(2.0)
-
         # Turn on physics to apply control
         ego_vehicle.set_simulate_physics(True)
 
         # set up agent to control ego vehicle
         agent = NaiveAgent(ego_vehicle, route, target_speed=25)
 
+        # workaround to make spectator follow ego vehicle
+        world.wait_for_tick()
+        dummy_bp = blueprint_library.find('sensor.other.collision')
+        dummy_transform = carla.Transform(carla.Location(x=-8.0, z=6.0), carla.Rotation(pitch=6.0))
+        dummy = world.spawn_actor(dummy_bp, dummy_transform, 
+            attach_to=ego_vehicle, attachment_type=carla.AttachmentType.SpringArm)
+        actor_list.append(dummy)
+
+        # get into synchronous mode to make sure time interval is guaranteed
         settings = world.get_settings()
         settings.synchronous_mode = True
         settings.fixed_delta_seconds = TIME_INTERVAL
@@ -392,6 +389,9 @@ def simulation(debug=False):
         while True:
             # synchronize with world
             world.tick()
+
+            # follow ego vehicle
+            spectator.set_transform(dummy.get_transform())
 
             # Apply control
             control = agent.run_step()
