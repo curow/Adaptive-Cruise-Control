@@ -33,6 +33,11 @@ from agents.navigation.controller import VehiclePIDController
 from utils import main
 
 # ==============================================================================
+# --global constants  ---------------------------------------------------------------------------------------------------
+# ==============================================================================
+TIME_INTERVAL = 0.03
+
+# ==============================================================================
 # -- utility function ----------------------------------------------------------
 # ==============================================================================
 def draw_waypoints(world, waypoints, z=0.1):
@@ -56,14 +61,18 @@ def get_actor_display_name(actor, truncate=250):
     name = ' '.join(actor.type_id.replace('_', '.').title().split('.')[1:])
     return (name[:truncate - 1] + u'\u2026') if len(name) > truncate else name
 
-def get_speed(vehicle):
+def get_speed(vehicle, unit='kmh'):
     """
     Compute speed of a vehicle in Kmh
     :param vehicle: the vehicle for which speed is calculated
     :return: speed as a float in Kmh
     """
     vel = vehicle.get_velocity()
-    return 3.6 * math.sqrt(vel.x ** 2 + vel.y ** 2 + vel.z ** 2)
+    vel_ms = math.sqrt(vel.x ** 2 + vel.y ** 2 + vel.z ** 2) 
+    if unit == 'kmh':
+        return 3.6 * vel_ms
+    else:
+        return vel_ms
 
 def get_distance(ego_vehicle_transform, other_transform):
     ego_heading = ego_vehicle_transform.rotation.yaw
@@ -87,6 +96,99 @@ def emergency_stop():
             hand_brake=False,
             manual_gear_shift=False
         )
+
+# ==============================================================================
+# -- Vehicle Physical Constrains -----------------------------------------------
+# ==============================================================================
+# https://github.com/carla-simulator/ros-bridge/blob/master/carla_ackermann_control/src/carla_ackermann_control/carla_control_physics.py
+
+def get_vehicle_max_speed(_):
+    """
+    Get the maximum speed of a carla vehicle
+    :param vehicle_info: the vehicle info
+    :type vehicle_info: carla_ros_bridge.CarlaEgoVehicleInfo
+    :return: maximum speed [m/s]
+    :rtype: float64
+    """
+    # 180 km/h is the default max speed of a car
+    max_speed = 180.0 / 3.6
+
+    return max_speed
+
+
+def get_vehicle_max_acceleration(_):
+    """
+    Get the maximum acceleration of a carla vehicle
+    default: 3.0 m/s^2: 0-100 km/h in 9.2 seconds
+    :param vehicle_info: the vehicle info
+    :type vehicle_info: carla_ros_bridge.CarlaEgoVehicleInfo
+    :return: maximum acceleration [m/s^2 > 0]
+    :rtype: float64
+    """
+    max_acceleration = 3.0
+
+    return max_acceleration
+
+
+def get_vehicle_max_deceleration(_):
+    """
+    Get the maximum deceleration of a carla vehicle
+    default: 8 m/s^2
+    :param vehicle_info: the vehicle info
+    :type vehicle_info: carla_ros_bridge.CarlaEgoVehicleInfo
+    :return: maximum deceleration [m/s^2 > 0]
+    :rtype: float64
+    """
+    max_deceleration = 8.0
+
+    return max_deceleration
+
+# ==============================================================================
+# -- Intelligent Driver Model --------------------------------------------------
+# ==============================================================================
+class IDM:
+    def __init__(self, vehicle, leader_speed, leader_distance, dt):
+        """
+        leader_speed: [kmh]
+        """
+        self.ego_vehicle = vehicle
+        self.time_interval = dt
+        # translate kmh to meters/second
+        self.leader_speed, self.leader_distance = leader_speed / 3.6, leader_distance    
+        self.desired_speed = 25 / 3.6
+        # 2 second time headway
+        self.safetime_headway = 2
+        # 10 meters minimum distance
+        self.minimum_distance = 10
+
+        self.max_acceleration = get_vehicle_max_acceleration(self.ego_vehicle)
+        self.max_deceleration = get_vehicle_max_deceleration(self.ego_vehicle)
+
+    def calc_desired_gap(self):
+        ego_speed = get_speed(self.ego_vehicle, unit='ms')
+        additional_gap = (self.safetime_headway * ego_speed) + \
+                (ego_speed * (ego_speed - self.leader_speed) /
+                        (2 * math.sqrt(self.max_acceleration * self.max_deceleration / 2)))
+        return self.minimum_distance + max(0, additional_gap)
+
+    def calc_desired_acceleration(self):
+        """
+        dv(t)/dt = a[1 - (v(t)/v0)^4  - (s*(t)/s(t))^2]
+        """
+        ego_speed = get_speed(self.ego_vehicle, unit='ms')
+        free_ratio = math.pow(
+                ego_speed / self.desired_speed, 4)
+        block_ratio = math.pow(
+                self.calc_desired_gap() / self.leader_distance, 2)
+        return self.max_acceleration * (1 - free_ratio - block_ratio)
+
+    def calc_desired_speed(self):
+        dt = self.time_interval
+        desired_acceleration = self.calc_desired_acceleration()
+        ego_speed = get_speed(self.ego_vehicle, unit='ms')
+        desired_speed = ego_speed + desired_acceleration * dt
+        return max(desired_speed, 0) *3.6
+
 # ==============================================================================
 # -- Naive Agent ---------------------------------------------------------------
 # ==============================================================================
@@ -98,8 +200,6 @@ class NaiveAgent:
         self._world = self._vehicle.get_world()
         self._map = self._world.get_map()
         self._vehicle_controller = VehiclePIDController(self._vehicle)
-
-    
 
     def is_close(self, other_transform, epsilon=0.1):
         vehicle_transform = self._vehicle.get_transform()
@@ -150,7 +250,6 @@ class NaiveAgent:
     def get_front_vehicle_state(self):
         actor_list = self._world.get_actors()
         vehicle_list = actor_list.filter("*vehicle*")
-        ego_vehicle_transform = self._vehicle.get_transform()
         ego_vehicle_location = self._vehicle.get_location()
         ego_vehicle_waypoint = self._map.get_waypoint(ego_vehicle_location)
 
@@ -214,7 +313,10 @@ class NaiveAgent:
         if has_front_vehicle:
             front_vehicle_distance, front_vehicle_speed = vehicle_state
             print("obstacle distance: {:3f}m, speed: {:1f}km/h".format(front_vehicle_distance, front_vehicle_speed))
-            return self._vehicle_controller.run_step(self._target_speed, target_waypoint)
+            driver = IDM(self._vehicle, front_vehicle_speed, front_vehicle_distance, TIME_INTERVAL)
+            desired_speed = driver.calc_desired_speed()
+            print("target speed: {:1f}".format(desired_speed))
+            return self._vehicle_controller.run_step(desired_speed, target_waypoint)
         else:
             return self._vehicle_controller.run_step(self._target_speed, target_waypoint)
         
@@ -230,11 +332,10 @@ def simulation(debug=False):
         client = carla.Client('localhost', 2000)
         client.set_timeout(2.0)
         world = client.load_world('Town04')
-        world.set_weather(carla.WeatherParameters.ClearNoon)
+        world.set_weather(carla.WeatherParameters.WetNoon)
         spectator = world.get_spectator()
         world_map = world.get_map()
         blueprint_library = world.get_blueprint_library()
-        world.set_weather(carla.WeatherParameters.ClearNoon)
         
         # Set up ego vehicle model and location
         vehicle_blueprint = random.choice(blueprint_library.filter('vehicle.tesla.*'))
@@ -286,7 +387,7 @@ def simulation(debug=False):
 
         settings = world.get_settings()
         settings.synchronous_mode = True
-        settings.fixed_delta_seconds = 0.03
+        settings.fixed_delta_seconds = TIME_INTERVAL
         world.apply_settings(settings)
         while True:
             # synchronize with world
@@ -302,13 +403,13 @@ def simulation(debug=False):
         print("\nInterrupted")
 
     finally:
-        # change back to asynchronous mode
-        settings = world.get_settings()
-        settings.synchronous_mode = False 
-        world.apply_settings(settings)
-
         print('destroying actors...')
         for actor in actor_list:
             if actor is not None:
                 actor.destroy()
+
+        # change back to asynchronous mode
+        settings = world.get_settings()
+        settings.synchronous_mode = False 
+        world.apply_settings(settings)
         print('done.')
