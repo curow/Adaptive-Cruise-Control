@@ -35,7 +35,7 @@ from utils import main
 # ==============================================================================
 # --global constants  ---------------------------------------------------------------------------------------------------
 # ==============================================================================
-TIME_INTERVAL = 0.03
+TIME_INTERVAL = 0.08
 
 # ==============================================================================
 # -- utility function ----------------------------------------------------------
@@ -196,6 +196,9 @@ class NaiveAgent:
         self._world = self._vehicle.get_world()
         self._map = self._world.get_map()
         self._vehicle_controller = VehiclePIDController(self._vehicle)
+    
+    def set_target_speed(self, target_speed):
+        self._target_speed = target_speed
 
     def is_close(self, other_transform, epsilon=0.1):
         vehicle_transform = self._vehicle.get_transform()
@@ -257,9 +260,12 @@ class NaiveAgent:
 
             # if the object is not in our lane it's not an obstacle
             target_vehicle_waypoint = self._map.get_waypoint(target_vehicle.get_location())
-            if target_vehicle_waypoint.road_id != ego_vehicle_waypoint.road_id or \
-                    target_vehicle_waypoint.lane_id != ego_vehicle_waypoint.lane_id:
+            # consider absolute value of lane_id is enough for the experiment
+            if abs(target_vehicle_waypoint.lane_id) != abs(ego_vehicle_waypoint.lane_id):
                 continue
+            # if target_vehicle_waypoint.road_id != ego_vehicle_waypoint.road_id or \
+            #         target_vehicle_waypoint.lane_id != ego_vehicle_waypoint.lane_id:
+            #     continue
 
             # get the state of front vehiles
             target_distance = self.get_distance(target_vehicle)
@@ -304,6 +310,7 @@ class NaiveAgent:
         target_waypoint = self._route[0]
         if debug:
             print("target waypoint: {}".format(target_waypoint))
+            print("waypoint lane id: {}".format(target_waypoint.lane_id))
 
         has_front_vehicle, front_vehicle_state = self.get_front_vehicle_state()
         if has_front_vehicle:
@@ -329,23 +336,30 @@ def simulation(debug=False):
         # Initialize
         client = carla.Client('localhost', 2000)
         client.set_timeout(2.0)
-        world = client.load_world('Town04')
-        world.set_weather(carla.WeatherParameters.WetNoon)
+        world = client.get_world()
         spectator = world.get_spectator()
         world_map = world.get_map()
         blueprint_library = world.get_blueprint_library()
         
         # Set up ego vehicle model and location
         vehicle_blueprint = random.choice(blueprint_library.filter('vehicle.tesla.*'))
-        colors = vehicle_blueprint.get_attribute('color').recommended_values
-        print("recommended colors: {}".format(colors))
         vehicle_blueprint.set_attribute('color', '255,255,255')
         spawn_point = carla.Transform(carla.Location(x=330, y=14, z=20), carla.Rotation(yaw=-180))
 
         # Create ego vehicle
         ego_vehicle = world.spawn_actor(vehicle_blueprint, spawn_point)
         actor_list.append(ego_vehicle)
-        print("{} created!".format(ego_vehicle))
+        print("ego {} created!".format(ego_vehicle))
+
+        # Set up leader vehicle model and location
+        vehicle_blueprint = random.choice(blueprint_library.filter('vehicle.tesla.*'))
+        vehicle_blueprint.set_attribute('color', '255,0,0')
+        spawn_point = carla.Transform(carla.Location(x=310, y=14, z=20), carla.Rotation(yaw=-180))
+
+        # Create leader vehicle
+        leader_vehicle = world.spawn_actor(vehicle_blueprint, spawn_point)
+        actor_list.append(leader_vehicle)
+        print("leader {} created!".format(leader_vehicle))
 
         # Retrieve the closest waypoint.
         world.wait_for_tick()
@@ -363,15 +377,34 @@ def simulation(debug=False):
 
         # Disable physics, we're just teleporting the vehicle.
         ego_vehicle.set_simulate_physics(False)
+        leader_vehicle.set_simulate_physics(False)
 
         # Teleport the vehicle at the starting point.
         ego_vehicle.set_transform(route[0].transform)
+        leader_vehicle.set_transform(route[10].transform)
 
         # Turn on physics to apply control
         ego_vehicle.set_simulate_physics(True)
+        leader_vehicle.set_simulate_physics(True)
 
         # set up agent to control ego vehicle
-        agent = NaiveAgent(ego_vehicle, route, target_speed=25)
+        agent = NaiveAgent(ego_vehicle, route, target_speed=60)
+        leader_agent = NaiveAgent(leader_vehicle, route, target_speed=60)
+
+        # Create leader vehicle speed profile
+        speed_profile = []
+        second_length = int(1 / TIME_INTERVAL)
+        speed_profile.extend([10] * 5 * second_length)
+        speed_profile.extend([20] * 5 * second_length)
+        speed_profile.extend([30] * 5 * second_length)
+        speed_profile.extend([40] * 5 * second_length)
+        speed_profile.extend([50] * 5 * second_length)
+        speed_profile.extend([60] * 5 * second_length)
+        speed_profile.extend([50] * 5 * second_length)
+        speed_profile.extend([40] * 5 * second_length)
+        speed_profile.extend([20] * 5 * second_length)
+        speed_profile.extend([10] * 5 * second_length)
+        speed_profile.extend([0] * 30 * second_length)
 
         # workaround to make spectator follow ego vehicle
         world.wait_for_tick()
@@ -382,10 +415,13 @@ def simulation(debug=False):
         actor_list.append(dummy)
 
         # get into synchronous mode to make sure time interval is guaranteed
+        time.sleep(2.0)
+        world.wait_for_tick()
         settings = world.get_settings()
         settings.synchronous_mode = True
-        settings.fixed_delta_seconds = TIME_INTERVAL
         world.apply_settings(settings)
+        settings.fixed_delta_seconds = TIME_INTERVAL
+
         while True:
             # synchronize with world
             world.tick()
@@ -393,11 +429,22 @@ def simulation(debug=False):
             # follow ego vehicle
             spectator.set_transform(dummy.get_transform())
 
-            # Apply control
+            # Apply control to leader vehicle
+            if speed_profile:
+                leader_agent.set_target_speed(speed_profile[0]) 
+                speed_profile = speed_profile[1:]
+            else:
+                leader_agent.set_target_speed(25)
+            control = leader_agent.run_step()
+            leader_vehicle.apply_control(control)
+
+            # Apply control to ego vehicle
             control = agent.run_step()
             if debug and control.throttle:
                 print(control)
             ego_vehicle.apply_control(control)
+
+
 
     except KeyboardInterrupt:
         print("\nInterrupted")
