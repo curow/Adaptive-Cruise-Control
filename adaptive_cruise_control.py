@@ -36,7 +36,7 @@ from utils import main
 # ==============================================================================
 # --global constants  ---------------------------------------------------------------------------------------------------
 # ==============================================================================
-TIME_INTERVAL = 0.08
+TIME_INTERVAL = 0.03
 
 # ==============================================================================
 # -- utility function ----------------------------------------------------------
@@ -231,7 +231,7 @@ class NaiveAgent:
         return info_dict
 
     def store_history(self):
-        self._history.to_csv('./out/acc.csv')
+        self._history.to_csv('./out/acc{}.csv'.format(time.strftime("%Y%m%d-%H%M%S")))
 
     def set_target_speed(self, target_speed):
         self._target_speed = target_speed
@@ -369,7 +369,6 @@ class NaiveAgent:
         else:
             control = self._vehicle_controller.run_step(self._target_speed, target_waypoint)
         self.update_history(self.get_info_dict(timestamp, ego_vehicle_snapshot, front_vehicle_snapshot))
-        
         return control
         
 
@@ -466,8 +465,8 @@ def simulation(debug=False):
         world.wait_for_tick()
         settings = world.get_settings()
         settings.synchronous_mode = True
-        world.apply_settings(settings)
         settings.fixed_delta_seconds = TIME_INTERVAL
+        world.apply_settings(settings)
 
         while True:
             # synchronize with world
