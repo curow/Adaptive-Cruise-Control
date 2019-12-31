@@ -35,7 +35,7 @@ from utils import main
 # ==============================================================================
 # --global constants  ---------------------------------------------------------------------------------------------------
 # ==============================================================================
-TIME_INTERVAL = 0.08
+TIME_INTERVAL = 0.03
 
 # ==============================================================================
 # -- utility function ----------------------------------------------------------
@@ -315,7 +315,10 @@ class NaiveAgent:
         has_front_vehicle, front_vehicle_state = self.get_front_vehicle_state()
         if has_front_vehicle:
             front_vehicle_distance, front_vehicle_speed = front_vehicle_state
-            print("obstacle distance: {:3f}m, speed: {:1f}km/h".format(front_vehicle_distance, front_vehicle_speed))
+            world_snapshot = self._world.get_snapshot()
+            timestamp = world_snapshot.timestamp
+            print("time: {}, obstacle distance: {:3f}m, speed: {:1f}km/h".format(
+                timestamp.elapsed_seconds, front_vehicle_distance, front_vehicle_speed))
             if front_vehicle_distance < self._driver.minimum_distance:
                 return emergency_stop()
             self._driver.set_leader_info(*front_vehicle_state)
@@ -367,7 +370,7 @@ def simulation(debug=False):
 
         # Get route for vehicle to follow
         route = [waypoint]
-        for _ in range(1000):
+        for _ in range(250):
             waypoint = random.choice(waypoint.next(2.0))
             route.append(waypoint)
 
@@ -388,8 +391,8 @@ def simulation(debug=False):
         leader_vehicle.set_simulate_physics(True)
 
         # set up agent to control ego vehicle
-        agent = NaiveAgent(ego_vehicle, route, target_speed=60)
-        leader_agent = NaiveAgent(leader_vehicle, route, target_speed=60)
+        agent = NaiveAgent(ego_vehicle, route, target_speed=25)
+        leader_agent = NaiveAgent(leader_vehicle, route, target_speed=25)
 
         # Create leader vehicle speed profile
         speed_profile = []
@@ -419,8 +422,8 @@ def simulation(debug=False):
         world.wait_for_tick()
         settings = world.get_settings()
         settings.synchronous_mode = True
-        world.apply_settings(settings)
         settings.fixed_delta_seconds = TIME_INTERVAL
+        world.apply_settings(settings)
 
         while True:
             # synchronize with world
@@ -436,13 +439,13 @@ def simulation(debug=False):
             else:
                 leader_agent.set_target_speed(25)
             control = leader_agent.run_step()
-            leader_vehicle.apply_control(control)
 
             # Apply control to ego vehicle
             control = agent.run_step()
             if debug and control.throttle:
                 print(control)
             ego_vehicle.apply_control(control)
+            leader_vehicle.apply_control(control)
 
 
 
