@@ -475,20 +475,22 @@ def simulation(debug=False):
             # follow ego vehicle
             spectator.set_transform(dummy.get_transform())
 
-            # Apply control to leader vehicle
+            # control to leader vehicle
             if speed_profile:
                 leader_agent.set_target_speed(speed_profile[0]) 
                 speed_profile = speed_profile[1:]
             else:
                 leader_agent.set_target_speed(25)
             control = leader_agent.run_step()
-            leader_vehicle.apply_control(control)
 
-            # Apply control to ego vehicle
+            # control to ego vehicle
             control = agent.run_step()
             if debug and control.throttle:
                 print(control)
+
+            # apply control
             ego_vehicle.apply_control(control)
+            leader_vehicle.apply_control(control)
 
 
 
