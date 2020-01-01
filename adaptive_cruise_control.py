@@ -413,7 +413,7 @@ def simulation(debug=False):
 
         # Get route for vehicle to follow
         route = [waypoint]
-        for _ in range(1000):
+        for _ in range(250):
             waypoint = random.choice(waypoint.next(2.0))
             route.append(waypoint)
 
@@ -434,8 +434,8 @@ def simulation(debug=False):
         leader_vehicle.set_simulate_physics(True)
 
         # set up agent to control ego vehicle
-        agent = NaiveAgent(ego_vehicle, route, target_speed=60)
-        leader_agent = NaiveAgent(leader_vehicle, route, target_speed=60)
+        agent = NaiveAgent(ego_vehicle, route, target_speed=25)
+        leader_agent = NaiveAgent(leader_vehicle, route, target_speed=25)
 
         # Create leader vehicle speed profile
         speed_profile = []
