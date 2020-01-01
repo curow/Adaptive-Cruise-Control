@@ -167,14 +167,20 @@ def simulation(debug=False):
         print("\nInterrupted")
 
     finally:
-        # cleanup
+        # clean up
         print('destroying actors...')
         for actor in actor_list:
             if actor is not None:
                 actor.destroy()
 
         # change back to asynchronous mode
+        print("change back to asynchronous mode...")
         settings = world.get_settings()
         settings.synchronous_mode = False 
         world.apply_settings(settings)
+
+        # save agent history
+        print("save agent history...")
+        agent.store_history()
+
         print('done.')

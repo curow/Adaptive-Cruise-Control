@@ -64,7 +64,7 @@ class NaiveAgent:
             args_longitudinal=args_longitudinal_dict)
 
         self._history = pd.DataFrame(columns=[
-            'timestamp'
+            'timestamp',
             'ego_vehicle_x',
             'ego_vehicle_y',
             'ego_vehicle_z',
@@ -74,7 +74,30 @@ class NaiveAgent:
             'leader_vehicle_z',
             'leader_vehicle_v',
         ])
-    
+
+    def update_history(self, info_dict):
+        self._history = self._history.append(info_dict, ignore_index=True)
+
+    @staticmethod
+    def get_info_dict(timestamp, ego_vehicle_snapshot, leader_vehicle_snapshot):
+        info_dict = {}
+        info_dict['timestamp'] = timestamp.elapsed_seconds
+        ego_vehicle_location = ego_vehicle_snapshot.get_transform().location
+        info_dict['ego_vehicle_x'] = ego_vehicle_location.x
+        info_dict['ego_vehicle_y'] = ego_vehicle_location.y
+        info_dict['ego_vehicle_z'] = ego_vehicle_location.z
+        info_dict['ego_vehicle_v'] = get_speed(ego_vehicle_snapshot)
+        if leader_vehicle_snapshot:
+            leader_vehicle_location = leader_vehicle_snapshot.get_transform().location
+            info_dict['leader_vehicle_x'] = leader_vehicle_location.x
+            info_dict['leader_vehicle_y'] = leader_vehicle_location.y
+            info_dict['leader_vehicle_z'] = leader_vehicle_location.z
+            info_dict['leader_vehicle_v'] = get_speed(leader_vehicle_snapshot)
+        return info_dict
+
+    def store_history(self):
+        self._history.to_csv('./out/acc{}.csv'.format(time.strftime("%Y%m%d-%H%M%S")))
+
     def set_target_speed(self, target_speed):
         self._target_speed = target_speed
 
@@ -145,8 +168,9 @@ class NaiveAgent:
             # get the state of front vehiles
             target_distance = self.get_distance(target_vehicle)
             target_speed = get_speed(target_vehicle)
+            target_id = target_vehicle.id
             if target_distance > 0:
-                front_vehicles_info.append((target_distance, target_speed))
+                front_vehicles_info.append((target_distance, target_speed, target_id))
         
         if front_vehicles_info:
             front_vehicles_info = sorted(front_vehicles_info, key=lambda x: x[0])
@@ -189,18 +213,32 @@ class NaiveAgent:
 
         # find leader vehicle
         has_front_vehicle, front_vehicle_state = self.get_front_vehicle_state()
+
+        # prepare to add info to history
+        world_snapshot = self._world.get_snapshot()
+        timestamp = world_snapshot.timestamp
+        ego_vehicle_snapshot = world_snapshot.find(self._vehicle.id)
+        front_vehicle_snapshot = None
+
+        # get control based on front vehicle state
         if has_front_vehicle:
-            front_vehicle_distance, front_vehicle_speed = front_vehicle_state
+            front_vehicle_distance, front_vehicle_speed, front_vehicle_id = front_vehicle_state
+            front_vehicle_snapshot = world_snapshot.find(front_vehicle_id)
             print("obstacle distance: {:3f}m, speed: {:1f}km/h".format(
                 front_vehicle_distance, front_vehicle_speed))
-            if front_vehicle_distance < self._driver.minimum_distance:
-                return emergency_stop()
 
-            self._driver.set_leader_info(*front_vehicle_state)
-            desired_speed = self._driver.calc_desired_speed()
-            print("target speed: {:1f}".format(desired_speed))
-            return self._vehicle_controller.run_step(desired_speed, target_waypoint)
+            # stop directly if too close
+            if front_vehicle_distance < self._driver.minimum_distance:
+                control = emergency_stop()
+            else:
+                self._driver.set_leader_info(front_vehicle_distance, front_vehicle_speed)
+                desired_speed = self._driver.calc_desired_speed()
+                print("target speed: {:1f}".format(desired_speed))
+                control = self._vehicle_controller.run_step(desired_speed, target_waypoint)
         else:
             print("no obstacle, default speed: {}".format(self._target_speed))
-            return self._vehicle_controller.run_step(self._target_speed, target_waypoint)
+            control = self._vehicle_controller.run_step(self._target_speed, target_waypoint)
+
+        self.update_history(self.get_info_dict(timestamp, ego_vehicle_snapshot, front_vehicle_snapshot))
+        return control
  
