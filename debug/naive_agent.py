@@ -9,6 +9,7 @@ import time
 import math
 import weakref
 import numpy as np
+import pandas as pd
 
 # ==============================================================================
 # -- find carla and other API module and add them to path ----------------------
@@ -45,30 +46,34 @@ class NaiveAgent:
         self._world = self._vehicle.get_world()
         self._map = self._world.get_map()
         self._dt = TIME_INTERVAL
+
         # it works, but still has a little ossilation
-        # args_lateral_dict = {
-        #     'K_P': 0.08,
-        #     'K_D': 0.01,
-        #     'K_I': 0.04,
-        #     'dt': self._dt}
-        # args_longitudinal_dict = {
-        #     'K_P': 1.0,
-        #     'K_D': 0,
-        #     'K_I': 0,
-        #     'dt': self._dt}
         args_lateral_dict = {
             'K_P': 0.08,
-            'K_D': 0.005,
-            'K_I': 0.04,
+            'K_D': 0.008,
+            'K_I': 0.004,
             'dt': self._dt}
         args_longitudinal_dict = {
             'K_P': 1.0,
             'K_D': 0,
             'K_I': 0,
             'dt': self._dt}
-        self._vehicle_controller = VehiclePIDController(self._vehicle,
+        self._vehicle_controller = VehiclePIDController(
+            self._vehicle,
             args_lateral=args_lateral_dict,
             args_longitudinal=args_longitudinal_dict)
+
+        self._history = pd.DataFrame(columns=[
+            'timestamp'
+            'ego_vehicle_x',
+            'ego_vehicle_y',
+            'ego_vehicle_z',
+            'ego_vehicle_v',
+            'leader_vehicle_x',
+            'leader_vehicle_y',
+            'leader_vehicle_z',
+            'leader_vehicle_v',
+        ])
     
     def set_target_speed(self, target_speed):
         self._target_speed = target_speed

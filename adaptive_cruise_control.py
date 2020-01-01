@@ -461,7 +461,6 @@ def simulation(debug=False):
         actor_list.append(dummy)
 
         # get into synchronous mode to make sure time interval is guaranteed
-        time.sleep(2.0)
         world.wait_for_tick()
         settings = world.get_settings()
         settings.synchronous_mode = True
